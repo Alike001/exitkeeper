@@ -8,7 +8,9 @@ import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { getSetupChecklist } from "@/lib/server/configuration";
+import { listWithdrawalJobs } from "@/lib/server/withdrawal-jobs";
 import { cn } from "@/lib/utils";
+import { formatWeiAsEth } from "@/lib/withdrawals";
 
 const guarantees = [
   {
@@ -32,6 +34,7 @@ export default async function Home() {
   await connection();
   const setupItems = getSetupChecklist();
   const canCreate = setupItems.every((item) => item.configured);
+  const jobs = canCreate ? await listWithdrawalJobs() : [];
 
   return (
     <AppShell>
@@ -93,24 +96,54 @@ export default async function Home() {
 
         <section className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
           <Card className="min-h-80" id="withdrawals-empty">
-            <CardContent className="flex h-full min-h-80 flex-col justify-between p-7 lg:p-9">
-              <div>
-                <p className="font-medium text-muted-foreground text-xs uppercase tracking-[0.18em]">
-                  Withdrawals
-                </p>
-                <h2 className="mt-3 font-semibold text-2xl tracking-[-0.04em]">
-                  No withdrawal jobs yet.
-                </h2>
+            <CardContent className="p-7 lg:p-9">
+              <div className="flex items-start justify-between gap-5">
+                <div>
+                  <p className="font-medium text-muted-foreground text-xs uppercase tracking-[0.18em]">
+                    Withdrawal evidence
+                  </p>
+                  <h2 className="mt-3 font-semibold text-2xl tracking-[-0.04em]">
+                    {jobs.length === 0
+                      ? "No withdrawal jobs yet."
+                      : `${jobs.length} prepared job${jobs.length === 1 ? "" : "s"}.`}
+                  </h2>
+                </div>
+                <Badge variant="outline">Hoodi</Badge>
+              </div>
+
+              {jobs.length === 0 ? (
                 <p className="mt-3 max-w-md text-muted-foreground text-sm leading-6">
                   Once setup is healthy, prepare a Hoodi stETH or wstETH
-                  request. Waiting remains here as durable job state after you
-                  close the browser.
+                  request. Every review decision remains durable after you close
+                  the browser.
                 </p>
-              </div>
-              <div className="flex items-center gap-2 text-muted-foreground text-xs">
+              ) : (
+                <div className="mt-6 divide-y rounded-xl border">
+                  {jobs.map((job) => (
+                    <div
+                      className="flex items-center justify-between gap-4 px-4 py-3"
+                      key={job.id}
+                    >
+                      <div className="min-w-0">
+                        <p className="font-medium text-sm">
+                          {formatWeiAsEth(job.amountWei)} {job.asset}
+                        </p>
+                        <p className="mt-1 font-mono text-muted-foreground text-xs">
+                          {job.reference} · {job.ownerAddress.slice(0, 8)}…
+                          {job.ownerAddress.slice(-6)}
+                        </p>
+                      </div>
+                      <Badge variant="secondary">
+                        {job.status.replaceAll("-", " ")}
+                      </Badge>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="mt-7 flex items-center gap-2 text-muted-foreground text-xs">
                 <span className="size-1.5 rounded-full bg-amber-500" />
-                This build is explicitly testnet evidence, never a mainnet
-                claim.
+                Testnet evidence only. No mainnet claim is implied.
               </div>
             </CardContent>
           </Card>

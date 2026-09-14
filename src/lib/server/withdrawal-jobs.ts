@@ -104,6 +104,22 @@ export async function createWithdrawalJob(input: CreateJobInput) {
   return { job, approvalFingerprint, requestFingerprint };
 }
 
+export async function listWithdrawalJobs() {
+  return db
+    .select({
+      id: withdrawalJobs.id,
+      reference: withdrawalJobs.reference,
+      asset: withdrawalJobs.asset,
+      amountWei: withdrawalJobs.amountWei,
+      ownerAddress: withdrawalJobs.ownerAddress,
+      status: withdrawalJobs.status,
+      createdAt: withdrawalJobs.createdAt,
+    })
+    .from(withdrawalJobs)
+    .orderBy(desc(withdrawalJobs.createdAt))
+    .limit(12);
+}
+
 type WorkflowSnapshot = {
   approvalWorkflow: Parameters<typeof fingerprintWorkflow>[0];
   requestWorkflow: Parameters<typeof fingerprintWorkflow>[0];
