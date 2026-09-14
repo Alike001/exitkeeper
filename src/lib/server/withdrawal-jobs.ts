@@ -120,6 +120,36 @@ export async function listWithdrawalJobs() {
     .limit(12);
 }
 
+export async function getWithdrawalJobEvidence(jobId: string) {
+  const [job] = await db
+    .select()
+    .from(withdrawalJobs)
+    .where(eq(withdrawalJobs.id, jobId));
+  if (!job) {
+    return null;
+  }
+
+  const [snapshots, events, executions] = await Promise.all([
+    db
+      .select()
+      .from(decisionSnapshots)
+      .where(eq(decisionSnapshots.jobId, jobId))
+      .orderBy(desc(decisionSnapshots.createdAt)),
+    db
+      .select()
+      .from(lifecycleEvents)
+      .where(eq(lifecycleEvents.jobId, jobId))
+      .orderBy(desc(lifecycleEvents.createdAt)),
+    db
+      .select()
+      .from(keeperhubExecutions)
+      .where(eq(keeperhubExecutions.jobId, jobId))
+      .orderBy(desc(keeperhubExecutions.createdAt)),
+  ]);
+
+  return { job, snapshots, events, executions };
+}
+
 type WorkflowSnapshot = {
   approvalWorkflow: Parameters<typeof fingerprintWorkflow>[0];
   requestWorkflow: Parameters<typeof fingerprintWorkflow>[0];
