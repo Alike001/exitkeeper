@@ -1,0 +1,41 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1789274180448,
+      "tag": "0000_dry_wasp",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1789274189671,
+      "tag": "0001_enforce_append_only",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789274895889,
+      "tag": "0002_magenta_star_brand",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1789274895890,
+      "tag": "0003_hoodi_evidence",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789274895891,
+      "tag": "0004_hoodi_defaults",
+      "breakpoints": true
+    }
+  ]
+}

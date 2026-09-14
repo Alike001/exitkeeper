@@ -1,0 +1,1 @@
+ALTER TYPE "public"."execution_stage" ADD VALUE 'approval' BEFORE 'request';
