@@ -24,8 +24,17 @@ export default async function WithdrawalEvidencePage({
   const evidence = await getWithdrawalJobEvidence(jobId);
   if (!evidence) notFound();
 
-  const snapshot = evidence.snapshots[0];
-  const decision = snapshot?.decision as Record<string, unknown> | undefined;
+  const requestSnapshot = evidence.snapshots.find(
+    (snapshot) =>
+      snapshot.action === "REQUEST_STETH" ||
+      snapshot.action === "REQUEST_WSTETH",
+  );
+  const claimSnapshot = evidence.snapshots.find(
+    (snapshot) => snapshot.action === "CLAIM_OWNER",
+  );
+  const decision = requestSnapshot?.decision as
+    | Record<string, unknown>
+    | undefined;
   const canObserve = [
     "request-confirmed",
     "waiting-finalization",
@@ -114,7 +123,7 @@ export default async function WithdrawalEvidencePage({
               <div>
                 <p className="font-medium">Request workflow</p>
                 <p className="mt-1 break-all font-mono text-muted-foreground text-xs">
-                  {snapshot?.workflowFingerprint ?? "Not recorded"}
+                  {requestSnapshot?.workflowFingerprint ?? "Not recorded"}
                 </p>
               </div>
             </div>
@@ -129,6 +138,78 @@ export default async function WithdrawalEvidencePage({
                 </p>
               </div>
             </div>
+            {claimSnapshot ? (
+              <div className="flex gap-3">
+                <Fingerprint className="mt-0.5 size-4 shrink-0" />
+                <div>
+                  <p className="font-medium">Owner-only claim workflow</p>
+                  <p className="mt-1 break-all font-mono text-muted-foreground text-xs">
+                    {claimSnapshot.workflowFingerprint}
+                  </p>
+                </div>
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+
+        <Card className="mt-6">
+          <CardHeader className="border-b">
+            <CardTitle>Wayfinder-verified Lido state</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-6">
+            {evidence.requests.length === 0 ? (
+              <p className="text-muted-foreground text-sm">
+                Waiting for Wayfinder to discover the new withdrawal request.
+              </p>
+            ) : (
+              <div className="space-y-4">
+                {evidence.requests.map((request) => (
+                  <div
+                    className="rounded-lg border p-4"
+                    key={request.requestId.toString()}
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="font-medium">
+                          Lido request #{request.requestId.toString()}
+                        </p>
+                        <p className="mt-1 font-mono text-muted-foreground text-xs">
+                          observed at block{" "}
+                          {request.lastObservedBlock?.toString() ?? "pending"}
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <Badge variant="outline">
+                          {request.isFinalized ? "Finalized" : "Waiting"}
+                        </Badge>
+                        <Badge variant="outline">
+                          {request.isClaimed ? "Claimed" : "Unclaimed"}
+                        </Badge>
+                      </div>
+                    </div>
+                    <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+                      <div>
+                        <dt className="text-muted-foreground">
+                          Checkpoint hint
+                        </dt>
+                        <dd className="mt-1 font-mono text-xs">
+                          {request.checkpointHint?.toString() ??
+                            "Not available"}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-muted-foreground">Claimable ETH</dt>
+                        <dd className="mt-1">
+                          {request.claimableWei
+                            ? `${formatWeiAsEth(request.claimableWei)} ETH`
+                            : "Not available"}
+                        </dd>
+                      </div>
+                    </dl>
+                  </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
 

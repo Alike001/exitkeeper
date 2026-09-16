@@ -219,7 +219,7 @@ export async function getWithdrawalJobEvidence(jobId: string) {
     return null;
   }
 
-  const [snapshots, events, executions] = await Promise.all([
+  const [snapshots, events, executions, requests] = await Promise.all([
     db
       .select()
       .from(decisionSnapshots)
@@ -235,9 +235,14 @@ export async function getWithdrawalJobEvidence(jobId: string) {
       .from(keeperhubExecutions)
       .where(eq(keeperhubExecutions.jobId, jobId))
       .orderBy(desc(keeperhubExecutions.createdAt)),
+    db
+      .select()
+      .from(lidoRequests)
+      .where(eq(lidoRequests.jobId, jobId))
+      .orderBy(desc(lidoRequests.createdAt)),
   ]);
 
-  return { job, snapshots, events, executions };
+  return { job, snapshots, events, executions, requests };
 }
 
 type WorkflowSnapshot = {
