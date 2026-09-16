@@ -120,7 +120,6 @@ function writeContractNode(
       config: {
         actionType: "web3/write-contract",
         network: ETHEREUM_HOODI,
-        web3Connection: "default",
         contractAddress,
         abi,
         abiFunction,

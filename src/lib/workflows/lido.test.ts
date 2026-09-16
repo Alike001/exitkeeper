@@ -30,6 +30,7 @@ describe("Lido KeeperHub workflow builder", () => {
     ]);
     expect(JSON.stringify(workflow)).toContain(lidoContracts.withdrawalQueue);
     expect(JSON.stringify(workflow)).not.toContain("{{");
+    expect(workflow.nodes[1]?.data.config).not.toHaveProperty("web3Connection");
   });
 
   it("builds exact approval as a separately preflightable KeeperHub workflow", () => {
