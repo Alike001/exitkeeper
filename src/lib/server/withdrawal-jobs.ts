@@ -9,6 +9,7 @@ import {
   lifecycleEvents,
   withdrawalJobs,
 } from "@/lib/db/schema";
+import { executionReadinessBlockers } from "@/lib/execution-readiness";
 import { recoveredJobStatus } from "@/lib/execution-recovery";
 import {
   type KeeperHubExecutionReceipt,
@@ -41,6 +42,78 @@ function assertAddress(address: string): string {
     );
   }
   return address.toLowerCase();
+}
+
+function simulationFromSnapshot(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const simulation = (value as Record<string, unknown>).simulation;
+  if (
+    !simulation ||
+    typeof simulation !== "object" ||
+    Array.isArray(simulation)
+  ) {
+    return null;
+  }
+  const result = (simulation as Record<string, unknown>).result;
+  if (!result || typeof result !== "object" || Array.isArray(result))
+    return null;
+  const counts = result as Record<string, unknown>;
+  if (
+    typeof counts.simulatedNodeCount !== "number" ||
+    typeof counts.skippedNodeCount !== "number"
+  ) {
+    return null;
+  }
+  return {
+    simulatedNodeCount: counts.simulatedNodeCount,
+    skippedNodeCount: counts.skippedNodeCount,
+  };
+}
+
+async function nativeBalanceWei(address: string): Promise<string> {
+  const rpcUrl = process.env.ETHEREUM_RPC_URL;
+  if (!rpcUrl) throw new Error("ETHEREUM_RPC_URL is not configured");
+  const response = await fetch(rpcUrl, {
+    method: "POST",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "eth_getBalance",
+      params: [address, "latest"],
+    }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  const payload = (await response.json()) as { result?: unknown };
+  if (!response.ok || typeof payload.result !== "string") {
+    throw new Error("Unable to verify the KeeperHub wallet gas balance");
+  }
+  return BigInt(payload.result).toString();
+}
+
+async function assertWithdrawalExecutionReady(
+  job: { asset: "stETH" | "wstETH"; amountWei: string; ownerAddress: string },
+  executions: Array<{ responseSnapshot: Record<string, unknown> | null }>,
+) {
+  const [accountState, gasBalance] = await Promise.all([
+    wayfinderClientFromEnvironment().getAccountState(job.ownerAddress),
+    nativeBalanceWei(job.ownerAddress),
+  ]);
+  const tokenBalanceWei =
+    job.asset === "stETH"
+      ? accountState.steth.balance_raw
+      : accountState.wsteth.balance_raw;
+  const simulations = executions
+    .map((execution) => simulationFromSnapshot(execution.responseSnapshot))
+    .filter((simulation) => simulation !== null);
+  const blockers = executionReadinessBlockers({
+    tokenBalanceWei,
+    requiredTokenWei: job.amountWei,
+    nativeBalanceWei: gasBalance,
+    simulations,
+  });
+  if (blockers.length > 0) throw new Error(blockers.join("; "));
 }
 
 export async function createWithdrawalJob(input: CreateJobInput) {
@@ -294,6 +367,8 @@ export async function executeReviewedWithdrawalJob(jobId: string) {
   if (!(approval && request)) {
     throw new Error("Reviewed KeeperHub workflows are incomplete");
   }
+
+  await assertWithdrawalExecutionReady(job, [approval, request]);
 
   const keeperHub = keeperHubClientFromEnvironment();
   async function executeStage(execution: NonNullable<typeof approval>) {
@@ -651,6 +726,17 @@ export async function executeReviewedClaim(jobId: string) {
     );
   if (!execution || execution.status !== "prepared") {
     throw new Error("A prepared KeeperHub claim workflow was not found");
+  }
+
+  const claimSimulation = simulationFromSnapshot(execution.responseSnapshot);
+  const claimBlockers = executionReadinessBlockers({
+    tokenBalanceWei: "0",
+    requiredTokenWei: "0",
+    nativeBalanceWei: await nativeBalanceWei(job.ownerAddress),
+    simulations: claimSimulation ? [claimSimulation] : [],
+  });
+  if (claimBlockers.length > 0) {
+    throw new Error(claimBlockers.join("; "));
   }
 
   const keeperHub = keeperHubClientFromEnvironment();
