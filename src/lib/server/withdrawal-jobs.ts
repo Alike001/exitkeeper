@@ -5,10 +5,13 @@ import { db } from "@/lib/db/client";
 import {
   decisionSnapshots,
   keeperhubExecutions,
+  lidoRequests,
   lifecycleEvents,
   withdrawalJobs,
 } from "@/lib/db/schema";
 import { keeperHubClientFromEnvironment } from "@/lib/server/keeperhub-client";
+import { wayfinderClientFromEnvironment } from "@/lib/server/wayfinder-client";
+import { selectObservedRequest } from "@/lib/wayfinder-observation";
 import {
   HOODI_CHAIN_ID,
   parseEthAmountToWei,
@@ -39,6 +42,14 @@ export async function createWithdrawalJob(input: CreateJobInput) {
   const amountWei = parseEthAmountToWei(input.amount);
   const keeperHub = keeperHubClientFromEnvironment();
   const ownerAddress = assertAddress(await keeperHub.getWalletAddress());
+  let baselineRequestIds: string[] = [];
+  try {
+    const accountState =
+      await wayfinderClientFromEnvironment().getAccountState(ownerAddress);
+    baselineRequestIds = accountState.withdrawals?.request_ids ?? [];
+  } catch {
+    baselineRequestIds = [];
+  }
   const reference = createReference();
   const requestWorkflow = buildRequestWorkflow({
     jobReference: reference,
@@ -88,6 +99,7 @@ export async function createWithdrawalJob(input: CreateJobInput) {
         requestFingerprint,
         approvalWorkflow,
         requestWorkflow,
+        baselineRequestIds,
       },
     });
     await tx.insert(lifecycleEvents).values({
@@ -352,4 +364,153 @@ export async function executeReviewedWithdrawalJob(jobId: string) {
       .where(eq(withdrawalJobs.id, jobId));
     throw error;
   }
+}
+
+function baselineIdsFromSnapshots(
+  snapshots: { decision: Record<string, unknown> }[],
+): string[] {
+  for (const snapshot of snapshots) {
+    const value = snapshot.decision.baselineRequestIds;
+    if (
+      Array.isArray(value) &&
+      value.every((item) => typeof item === "string")
+    ) {
+      return value;
+    }
+  }
+  return [];
+}
+
+export async function observeWithdrawalJob(jobId: string) {
+  const [job] = await db
+    .select()
+    .from(withdrawalJobs)
+    .where(eq(withdrawalJobs.id, jobId));
+  if (!job) {
+    throw new Error("Withdrawal job was not found");
+  }
+  if (
+    job.status !== "request-confirmed" &&
+    job.status !== "waiting-finalization" &&
+    job.status !== "claimable"
+  ) {
+    throw new Error("Only a confirmed Lido request can be observed");
+  }
+
+  const snapshots = await db
+    .select({ decision: decisionSnapshots.decision })
+    .from(decisionSnapshots)
+    .where(eq(decisionSnapshots.jobId, jobId))
+    .orderBy(desc(decisionSnapshots.createdAt));
+  const wayfinder = wayfinderClientFromEnvironment();
+  const accountState = await wayfinder.getAccountState(job.ownerAddress);
+  const withdrawals = accountState.withdrawals;
+  const observed = selectObservedRequest({
+    asset: job.asset,
+    amountWei: job.amountWei,
+    ownerAddress: job.ownerAddress,
+    createdAt: job.createdAt,
+    baselineRequestIds: baselineIdsFromSnapshots(snapshots),
+    statuses: withdrawals?.statuses ?? [],
+  });
+
+  const verifiedObservation = observed
+    ? await wayfinder.getRequestStatus([observed.request_id])
+    : null;
+  const verified = verifiedObservation?.statuses[0] ?? observed;
+  const checkpointHint = verifiedObservation?.checkpointHints[0];
+  const claimableWei = observed
+    ? withdrawals?.claimable_ether_by_id?.[observed.request_id]
+    : undefined;
+  const nextStatus = verified?.is_claimed
+    ? "claimed"
+    : verified?.is_finalized &&
+        checkpointHint &&
+        BigInt(claimableWei ?? "0") > 0
+      ? "claimable"
+      : "waiting-finalization";
+
+  await db.transaction(async (tx) => {
+    if (verified) {
+      await tx
+        .insert(lidoRequests)
+        .values({
+          requestId: BigInt(verified.request_id),
+          jobId,
+          amountOfStEth: verified.amount_of_steth,
+          amountOfShares: verified.amount_of_shares,
+          ownerAddress: verified.owner.toLowerCase(),
+          requestedAt: new Date(Number(verified.timestamp) * 1000),
+          isFinalized: verified.is_finalized,
+          isClaimed: verified.is_claimed,
+          checkpointHint: checkpointHint ? BigInt(checkpointHint) : null,
+          claimableWei: claimableWei ?? null,
+          lastObservedBlock: BigInt(
+            verifiedObservation?.observedBlock ?? accountState.observed_block,
+          ),
+          lastObservedAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: lidoRequests.requestId,
+          set: {
+            isFinalized: verified.is_finalized,
+            isClaimed: verified.is_claimed,
+            checkpointHint: checkpointHint ? BigInt(checkpointHint) : null,
+            claimableWei: claimableWei ?? null,
+            lastObservedBlock: BigInt(
+              verifiedObservation?.observedBlock ?? accountState.observed_block,
+            ),
+            lastObservedAt: new Date(),
+            updatedAt: new Date(),
+          },
+        });
+    }
+
+    await tx
+      .update(withdrawalJobs)
+      .set({ status: nextStatus, updatedAt: new Date() })
+      .where(eq(withdrawalJobs.id, jobId));
+    await tx.insert(decisionSnapshots).values({
+      jobId,
+      action: "NO_ACTION",
+      observedBlock: BigInt(
+        verifiedObservation?.observedBlock ?? accountState.observed_block,
+      ),
+      observedAt: new Date(),
+      workflowFingerprint:
+        snapshots[0]?.decision.requestFingerprint?.toString() ??
+        "observation-only",
+      decision: {
+        source: "wayfinder",
+        observedBlock:
+          verifiedObservation?.observedBlock ?? accountState.observed_block,
+        requestId: verified?.request_id ?? null,
+        isFinalized: verified?.is_finalized ?? false,
+        isClaimed: verified?.is_claimed ?? false,
+        checkpointHint: checkpointHint ?? null,
+        claimableWei: claimableWei ?? null,
+      },
+    });
+    await tx.insert(lifecycleEvents).values({
+      jobId,
+      fromStatus: job.status,
+      toStatus: nextStatus,
+      source: "wayfinder",
+      summary: verified
+        ? `Wayfinder verified Lido request ${verified.request_id} as ${nextStatus.replaceAll("-", " ")}.`
+        : "Wayfinder is monitoring for the new Lido request ID.",
+      evidence: {
+        requestId: verified?.request_id ?? null,
+        checkpointHint: checkpointHint ?? null,
+        claimableWei: claimableWei ?? null,
+      },
+    });
+  });
+
+  return {
+    status: nextStatus,
+    requestId: verified?.request_id ?? null,
+    checkpointHint: checkpointHint ?? null,
+    claimableWei: claimableWei ?? null,
+  };
 }

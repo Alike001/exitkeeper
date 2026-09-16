@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import urllib.request
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -38,6 +39,40 @@ def require_request_ids(value: Any) -> list[int]:
     return sorted(set(ids))
 
 
+def serialize_uint(value: Any) -> str:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise RuntimeError("Wayfinder returned an invalid unsigned integer")
+    return str(value)
+
+
+def serialize_status(status: Any) -> dict[str, Any]:
+    if not isinstance(status, dict):
+        raise RuntimeError("Wayfinder returned an invalid withdrawal status")
+    return {
+        **status,
+        "request_id": serialize_uint(status.get("request_id")),
+        "amount_of_steth": serialize_uint(status.get("amount_of_steth")),
+        "amount_of_shares": serialize_uint(status.get("amount_of_shares")),
+        "timestamp": serialize_uint(status.get("timestamp")),
+    }
+
+
+def current_block_number() -> str:
+    rpc_url = require_string(os.environ.get("ETHEREUM_RPC_URL"), "ETHEREUM_RPC_URL")
+    body = json.dumps(
+        {"jsonrpc": "2.0", "id": 1, "method": "eth_blockNumber", "params": []}
+    ).encode()
+    request = urllib.request.Request(
+        rpc_url, data=body, headers={"Content-Type": "application/json"}
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        payload = json.loads(response.read())
+    result = payload.get("result") if isinstance(payload, dict) else None
+    if not isinstance(result, str):
+        raise RuntimeError("Ethereum RPC returned an invalid block number")
+    return str(int(result, 16))
+
+
 async def account_state(payload: dict[str, Any]) -> dict[str, Any]:
     account = require_string(payload.get("account"), "account")
     adapter = LidoAdapter(wallet_address=account)
@@ -51,15 +86,32 @@ async def account_state(payload: dict[str, Any]) -> dict[str, Any]:
     if not ok or not isinstance(result, dict):
         raise RuntimeError("Wayfinder could not read the Lido account state")
 
+    steth = result.get("steth")
+    if isinstance(steth, dict):
+        steth["balance_raw"] = serialize_uint(steth.get("balance_raw"))
+        steth["shares_raw"] = serialize_uint(steth.get("shares_raw"))
+    wsteth = result.get("wsteth")
+    if isinstance(wsteth, dict):
+        wsteth["balance_raw"] = serialize_uint(wsteth.get("balance_raw"))
+        wsteth["steth_equivalent_raw"] = serialize_uint(
+            wsteth.get("steth_equivalent_raw")
+        )
+        wsteth["steth_per_token"] = serialize_uint(wsteth.get("steth_per_token"))
+
     withdrawals = result.get("withdrawals")
     if isinstance(withdrawals, dict):
         request_ids = withdrawals.get("request_ids")
         if isinstance(request_ids, list) and request_ids:
-            withdrawals["checkpoint_hints"] = await adapter._find_checkpoint_hints(
-                chain_id=HOODI_CHAIN_ID,
-                request_ids=[int(item) for item in request_ids],
-            )
-    return result
+            withdrawals["request_ids"] = [serialize_uint(item) for item in request_ids]
+            statuses = withdrawals.get("statuses")
+            if isinstance(statuses, list):
+                withdrawals["statuses"] = [serialize_status(item) for item in statuses]
+            claimable = withdrawals.get("claimable_ether_by_id")
+            if isinstance(claimable, dict):
+                withdrawals["claimable_ether_by_id"] = {
+                    str(key): serialize_uint(value) for key, value in claimable.items()
+                }
+    return {**result, "observed_block": current_block_number()}
 
 
 async def request_status(payload: dict[str, Any]) -> dict[str, Any]:
@@ -77,7 +129,12 @@ async def request_status(payload: dict[str, Any]) -> dict[str, Any]:
             chain_id=HOODI_CHAIN_ID,
             request_ids=request_ids,
         )
-    return {"request_ids": request_ids, "statuses": statuses, "checkpoint_hints": hints}
+    return {
+        "observed_block": current_block_number(),
+        "request_ids": [serialize_uint(item) for item in request_ids],
+        "statuses": [serialize_status(item) for item in statuses],
+        "checkpoint_hints": [serialize_uint(item) for item in hints],
+    }
 
 
 class Handler(BaseHTTPRequestHandler):

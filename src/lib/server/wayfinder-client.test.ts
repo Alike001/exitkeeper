@@ -11,6 +11,7 @@ describe("WayfinderClient", () => {
           protocol: "lido",
           chain_id: 560048,
           account: "0x60042Ce11258A07E1BC6Bd63983C6Ee63E80c2DC",
+          observed_block: "3620235",
         },
       }),
     );

@@ -2,6 +2,7 @@ import { ArrowLeft, Fingerprint, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
+import { ObserveWithdrawalButton } from "@/components/observe-withdrawal-button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getWithdrawalJobEvidence } from "@/lib/server/withdrawal-jobs";
@@ -23,6 +24,11 @@ export default async function WithdrawalEvidencePage({
 
   const snapshot = evidence.snapshots[0];
   const decision = snapshot?.decision as Record<string, unknown> | undefined;
+  const canObserve = [
+    "request-confirmed",
+    "waiting-finalization",
+    "claimable",
+  ].includes(evidence.job.status);
 
   return (
     <AppShell>
@@ -49,6 +55,12 @@ export default async function WithdrawalEvidencePage({
             {evidence.job.status.replaceAll("-", " ")}
           </Badge>
         </div>
+
+        {canObserve ? (
+          <div className="mt-6">
+            <ObserveWithdrawalButton jobId={evidence.job.id} />
+          </div>
+        ) : null}
 
         <section className="mt-10 grid gap-6 md:grid-cols-2">
           <Card>
@@ -131,6 +143,17 @@ export default async function WithdrawalEvidencePage({
                       <p className="mt-1 font-mono text-muted-foreground text-xs">
                         {execution.workflowId}
                       </p>
+                      {execution.transactionHashes.map((hash) => (
+                        <a
+                          className="mt-2 block font-mono text-xs underline underline-offset-4"
+                          href={`https://hoodi.etherscan.io/tx/${hash}`}
+                          key={hash}
+                          rel="noreferrer"
+                          target="_blank"
+                        >
+                          {hash.slice(0, 12)}…{hash.slice(-10)}
+                        </a>
+                      ))}
                     </div>
                     <Badge variant="outline">{execution.status}</Badge>
                   </div>

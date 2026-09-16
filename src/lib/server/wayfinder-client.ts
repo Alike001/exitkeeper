@@ -3,11 +3,11 @@ import "server-only";
 type Fetcher = typeof fetch;
 
 export type WayfinderRequestStatus = {
-  request_id: number;
-  amount_of_steth: number;
-  amount_of_shares: number;
+  request_id: string;
+  amount_of_steth: string;
+  amount_of_shares: string;
   owner: string;
-  timestamp: number;
+  timestamp: string;
   is_finalized: boolean;
   is_claimed: boolean;
 };
@@ -16,19 +16,20 @@ export type WayfinderAccountState = {
   protocol: "lido";
   chain_id: 560048;
   account: string;
-  steth: { address: string; balance_raw: number; shares_raw: number };
+  observed_block: string;
+  steth: { address: string; balance_raw: string; shares_raw: string };
   wsteth: {
     address: string;
-    balance_raw: number;
-    steth_equivalent_raw: number;
-    steth_per_token: number;
+    balance_raw: string;
+    steth_equivalent_raw: string;
+    steth_per_token: string;
   };
   withdrawals?: {
     withdrawal_queue: string;
-    request_ids: number[];
+    request_ids: string[];
     statuses?: WayfinderRequestStatus[];
-    checkpoint_hints?: number[];
-    claimable_ether_by_id?: Record<string, number>;
+    checkpoint_hints?: string[];
+    claimable_ether_by_id?: Record<string, string>;
   };
 };
 
@@ -81,7 +82,8 @@ export class WayfinderClient {
     if (
       result.protocol !== "lido" ||
       result.chain_id !== 560048 ||
-      typeof result.account !== "string"
+      typeof result.account !== "string" ||
+      typeof result.observed_block !== "string"
     ) {
       throw new Error("Wayfinder returned an invalid Lido account state");
     }
@@ -89,8 +91,9 @@ export class WayfinderClient {
   }
 
   async getRequestStatus(requestIds: string[]): Promise<{
+    observedBlock: string;
     statuses: WayfinderRequestStatus[];
-    checkpointHints: number[];
+    checkpointHints: string[];
   }> {
     if (requestIds.length === 0) {
       throw new Error("requestIds cannot be empty");
@@ -103,13 +106,15 @@ export class WayfinderClient {
     );
     if (
       !Array.isArray(result.statuses) ||
-      !Array.isArray(result.checkpoint_hints)
+      !Array.isArray(result.checkpoint_hints) ||
+      typeof result.observed_block !== "string"
     ) {
       throw new Error("Wayfinder returned an invalid Lido request status");
     }
     return {
+      observedBlock: result.observed_block,
       statuses: result.statuses as WayfinderRequestStatus[],
-      checkpointHints: result.checkpoint_hints as number[],
+      checkpointHints: result.checkpoint_hints as string[],
     };
   }
 }
