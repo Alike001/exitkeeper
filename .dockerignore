@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+.git
+.github
+.next
+.thoughts
+coverage
+node_modules
+npm-debug.log*
+pnpm-debug.log*

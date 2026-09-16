@@ -1,4 +1,35 @@
 services:
+  app:
+    profiles: ["production"]
+    build:
+      context: .
+      target: runner
+    environment:
+      DATABASE_URL: postgres://exitkeeper:exitkeeper@postgres:5432/exitkeeper
+      ETHEREUM_RPC_URL: ${ETHEREUM_RPC_URL:-https://ethereum-hoodi-rpc.publicnode.com}
+      KEEPERHUB_API_KEY: ${KEEPERHUB_API_KEY:-}
+      KEEPERHUB_BASE_URL: ${KEEPERHUB_BASE_URL:-https://app.keeperhub.com}
+      WAYFINDER_SERVICE_TOKEN: ${WAYFINDER_SERVICE_TOKEN:-local-development-only}
+      WAYFINDER_SERVICE_URL: http://wayfinder:8090
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      wayfinder:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3000:3000"
+
+  migrate:
+    profiles: ["production"]
+    build:
+      context: .
+      target: migrate
+    environment:
+      DATABASE_URL: postgres://exitkeeper:exitkeeper@postgres:5432/exitkeeper
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   postgres:
     image: postgres:17-alpine
     environment:
