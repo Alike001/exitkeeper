@@ -9,7 +9,10 @@ import {
   lifecycleEvents,
   withdrawalJobs,
 } from "@/lib/db/schema";
-import { keeperHubClientFromEnvironment } from "@/lib/server/keeperhub-client";
+import {
+  type KeeperHubExecutionReceipt,
+  keeperHubClientFromEnvironment,
+} from "@/lib/server/keeperhub-client";
 import { wayfinderClientFromEnvironment } from "@/lib/server/wayfinder-client";
 import { selectObservedRequest } from "@/lib/wayfinder-observation";
 import {
@@ -19,6 +22,7 @@ import {
 } from "@/lib/withdrawals";
 import {
   buildApprovalWorkflow,
+  buildClaimWorkflow,
   buildRequestWorkflow,
   fingerprintWorkflow,
 } from "@/lib/workflows/lido";
@@ -309,7 +313,16 @@ export async function executeReviewedWithdrawalJob(jobId: string) {
       })
       .where(eq(keeperhubExecutions.id, execution.id));
 
-    const receipt = await keeperHub.waitForExecution(accepted.executionId);
+    let receipt: KeeperHubExecutionReceipt;
+    try {
+      receipt = await keeperHub.waitForExecution(accepted.executionId);
+    } catch (error) {
+      await db
+        .update(keeperhubExecutions)
+        .set({ status: "uncertain", updatedAt: new Date() })
+        .where(eq(keeperhubExecutions.id, execution.id));
+      throw error;
+    }
     const hashes = receipt.transactionHashes.map(
       (transaction) => transaction.hash,
     );
@@ -392,7 +405,8 @@ export async function observeWithdrawalJob(jobId: string) {
   if (
     job.status !== "request-confirmed" &&
     job.status !== "waiting-finalization" &&
-    job.status !== "claimable"
+    job.status !== "claimable" &&
+    job.status !== "claim-submitted"
   ) {
     throw new Error("Only a confirmed Lido request can be observed");
   }
@@ -422,13 +436,17 @@ export async function observeWithdrawalJob(jobId: string) {
   const claimableWei = observed
     ? withdrawals?.claimable_ether_by_id?.[observed.request_id]
     : undefined;
-  const nextStatus = verified?.is_claimed
+  const observedStatus = verified?.is_claimed
     ? "claimed"
     : verified?.is_finalized &&
         checkpointHint &&
         BigInt(claimableWei ?? "0") > 0
       ? "claimable"
       : "waiting-finalization";
+  const nextStatus =
+    job.status === "claim-submitted" && observedStatus !== "claimed"
+      ? "claim-submitted"
+      : observedStatus;
 
   await db.transaction(async (tx) => {
     if (verified) {
@@ -513,4 +531,187 @@ export async function observeWithdrawalJob(jobId: string) {
     checkpointHint: checkpointHint ?? null,
     claimableWei: claimableWei ?? null,
   };
+}
+
+export async function reviewClaimWorkflow(jobId: string) {
+  const [job] = await db
+    .select()
+    .from(withdrawalJobs)
+    .where(eq(withdrawalJobs.id, jobId));
+  if (!job || job.status !== "claimable") {
+    throw new Error("Only a Wayfinder-verified claimable job can be reviewed");
+  }
+
+  const requests = await db
+    .select()
+    .from(lidoRequests)
+    .where(eq(lidoRequests.jobId, jobId));
+  const claimable = requests.filter(
+    (request) =>
+      request.isFinalized &&
+      !request.isClaimed &&
+      request.checkpointHint !== null &&
+      BigInt(request.claimableWei ?? "0") > 0,
+  );
+  if (claimable.length === 0 || claimable.length !== requests.length) {
+    throw new Error("Every Lido request must be finalized and claimable");
+  }
+
+  const workflow = buildClaimWorkflow({
+    jobReference: job.reference,
+    requestIds: claimable.map((request) => request.requestId.toString()),
+    checkpointHints: claimable.map((request) =>
+      request.checkpointHint?.toString(),
+    ) as string[],
+    ownerAddress: job.ownerAddress,
+  });
+  const fingerprint = await fingerprintWorkflow(workflow);
+  const keeperHub = keeperHubClientFromEnvironment();
+  const created = await keeperHub.createWorkflow(workflow);
+  const workflowId = created.id as string;
+  const simulation = await keeperHub.simulateWorkflow(workflowId);
+
+  await db.transaction(async (tx) => {
+    await tx.insert(decisionSnapshots).values({
+      jobId,
+      action: "CLAIM_OWNER",
+      observedBlock: claimable.reduce(
+        (highest, request) =>
+          request.lastObservedBlock && request.lastObservedBlock > highest
+            ? request.lastObservedBlock
+            : highest,
+        BigInt(0),
+      ),
+      observedAt: new Date(),
+      workflowFingerprint: fingerprint,
+      decision: {
+        ownerAddress: job.ownerAddress,
+        requestIds: claimable.map((request) => request.requestId.toString()),
+        checkpointHints: claimable.map((request) =>
+          request.checkpointHint?.toString(),
+        ),
+        workflow,
+      },
+    });
+    await tx.insert(keeperhubExecutions).values({
+      jobId,
+      stage: "claim",
+      idempotencyKey: `${job.reference}:claim`,
+      workflowId,
+      workflowFingerprint: fingerprint,
+      status: "prepared",
+      inputSnapshot: { workflow },
+      responseSnapshot: { workflow: created, simulation },
+    });
+    await tx.insert(lifecycleEvents).values({
+      jobId,
+      fromStatus: "claimable",
+      toStatus: "claimable",
+      source: "keeperhub",
+      summary:
+        "The owner-only claim workflow was created and dry-run by KeeperHub.",
+      evidence: { workflowId, workflowFingerprint: fingerprint },
+    });
+  });
+
+  return { workflow: created, simulation, fingerprint };
+}
+
+export async function executeReviewedClaim(jobId: string) {
+  const [job] = await db
+    .select()
+    .from(withdrawalJobs)
+    .where(eq(withdrawalJobs.id, jobId));
+  if (!job || job.status !== "claimable") {
+    throw new Error("Only a claimable job can execute its reviewed claim");
+  }
+  const [execution] = await db
+    .select()
+    .from(keeperhubExecutions)
+    .where(
+      and(
+        eq(keeperhubExecutions.jobId, jobId),
+        eq(keeperhubExecutions.stage, "claim"),
+      ),
+    );
+  if (!execution || execution.status !== "prepared") {
+    throw new Error("A prepared KeeperHub claim workflow was not found");
+  }
+
+  const keeperHub = keeperHubClientFromEnvironment();
+  let acceptedExecutionId: string | null = null;
+  let terminalFailure = false;
+  try {
+    const accepted = await keeperHub.executeWorkflow(
+      execution.workflowId,
+      execution.idempotencyKey,
+    );
+    acceptedExecutionId = accepted.executionId;
+    await db.transaction(async (tx) => {
+      await tx
+        .update(keeperhubExecutions)
+        .set({
+          keeperhubExecutionId: accepted.executionId,
+          status: "accepted",
+          acceptedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(keeperhubExecutions.id, execution.id));
+      await tx
+        .update(withdrawalJobs)
+        .set({ status: "claim-submitted", updatedAt: new Date() })
+        .where(eq(withdrawalJobs.id, jobId));
+    });
+
+    const receipt = await keeperHub.waitForExecution(accepted.executionId);
+    const succeeded = receipt.completed && receipt.error == null;
+    await db.transaction(async (tx) => {
+      await tx
+        .update(keeperhubExecutions)
+        .set({
+          status: succeeded ? "succeeded" : "failed",
+          responseSnapshot: { accepted, receipt },
+          transactionHashes: receipt.transactionHashes.map((item) => item.hash),
+          completedAt: receipt.completed ? new Date() : null,
+          updatedAt: new Date(),
+        })
+        .where(eq(keeperhubExecutions.id, execution.id));
+      await tx.insert(lifecycleEvents).values({
+        jobId,
+        fromStatus: "claimable",
+        toStatus: succeeded ? "claim-submitted" : "attention-required",
+        source: "keeperhub",
+        summary: succeeded
+          ? "KeeperHub executed the reviewed owner-only claim; Wayfinder verification is pending."
+          : "KeeperHub did not complete the reviewed claim successfully.",
+        evidence: {
+          executionId: accepted.executionId,
+          transactionHashes: receipt.transactionHashes.map((item) => item.hash),
+        },
+      });
+      if (!succeeded) {
+        await tx
+          .update(withdrawalJobs)
+          .set({ status: "attention-required", updatedAt: new Date() })
+          .where(eq(withdrawalJobs.id, jobId));
+      }
+    });
+    if (!succeeded) {
+      terminalFailure = true;
+      throw new Error("Claim workflow did not complete successfully");
+    }
+    return { receipt };
+  } catch (error) {
+    if (acceptedExecutionId && !terminalFailure) {
+      await db
+        .update(keeperhubExecutions)
+        .set({ status: "uncertain", updatedAt: new Date() })
+        .where(eq(keeperhubExecutions.id, execution.id));
+    }
+    await db
+      .update(withdrawalJobs)
+      .set({ status: "attention-required", updatedAt: new Date() })
+      .where(eq(withdrawalJobs.id, jobId));
+    throw error;
+  }
 }

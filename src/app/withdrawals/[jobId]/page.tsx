@@ -2,6 +2,7 @@ import { ArrowLeft, Fingerprint, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
+import { ClaimControls } from "@/components/claim-controls";
 import { ObserveWithdrawalButton } from "@/components/observe-withdrawal-button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,7 +29,11 @@ export default async function WithdrawalEvidencePage({
     "request-confirmed",
     "waiting-finalization",
     "claimable",
+    "claim-submitted",
   ].includes(evidence.job.status);
+  const claimReviewed = evidence.executions.some(
+    (execution) => execution.stage === "claim",
+  );
 
   return (
     <AppShell>
@@ -57,8 +62,11 @@ export default async function WithdrawalEvidencePage({
         </div>
 
         {canObserve ? (
-          <div className="mt-6">
+          <div className="mt-6 flex flex-wrap gap-3">
             <ObserveWithdrawalButton jobId={evidence.job.id} />
+            {evidence.job.status === "claimable" ? (
+              <ClaimControls jobId={evidence.job.id} reviewed={claimReviewed} />
+            ) : null}
           </div>
         ) : null}
 
