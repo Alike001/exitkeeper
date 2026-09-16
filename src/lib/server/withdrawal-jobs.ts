@@ -9,6 +9,7 @@ import {
   lifecycleEvents,
   withdrawalJobs,
 } from "@/lib/db/schema";
+import { recoveredJobStatus } from "@/lib/execution-recovery";
 import {
   type KeeperHubExecutionReceipt,
   keeperHubClientFromEnvironment,
@@ -296,6 +297,20 @@ export async function executeReviewedWithdrawalJob(jobId: string) {
 
   const keeperHub = keeperHubClientFromEnvironment();
   async function executeStage(execution: NonNullable<typeof approval>) {
+    if (execution.status === "succeeded" && execution.keeperhubExecutionId) {
+      return {
+        executionId: execution.keeperhubExecutionId,
+        status: "succeeded",
+        completed: true,
+        transactionHashes: execution.transactionHashes.map((hash) => ({
+          hash,
+        })),
+        output: null,
+        error: null,
+        gasUsedWei: null,
+        completedAt: execution.completedAt?.toISOString() ?? null,
+      } satisfies KeeperHubExecutionReceipt;
+    }
     if (execution.status !== "prepared") {
       throw new Error(`${execution.stage} workflow was already submitted`);
     }
@@ -714,4 +729,103 @@ export async function executeReviewedClaim(jobId: string) {
       .where(eq(withdrawalJobs.id, jobId));
     throw error;
   }
+}
+
+export async function recoverKeeperHubExecutions(jobId: string) {
+  const [job] = await db
+    .select()
+    .from(withdrawalJobs)
+    .where(eq(withdrawalJobs.id, jobId));
+  if (!job || job.status !== "attention-required") {
+    throw new Error("Only a job requiring attention can be recovered");
+  }
+
+  const executions = await db
+    .select()
+    .from(keeperhubExecutions)
+    .where(eq(keeperhubExecutions.jobId, jobId));
+  const recoverable = executions.filter(
+    (execution) =>
+      execution.keeperhubExecutionId &&
+      ["accepted", "running", "uncertain"].includes(execution.status),
+  );
+  if (recoverable.length === 0) {
+    throw new Error("No accepted KeeperHub execution is available to recover");
+  }
+
+  const keeperHub = keeperHubClientFromEnvironment();
+  for (const execution of recoverable) {
+    try {
+      const receipt = await keeperHub.waitForExecution(
+        execution.keeperhubExecutionId as string,
+      );
+      const succeeded = receipt.completed && receipt.error == null;
+      await db
+        .update(keeperhubExecutions)
+        .set({
+          status: succeeded
+            ? "succeeded"
+            : receipt.completed
+              ? "failed"
+              : "uncertain",
+          responseSnapshot: { recovered: true, receipt },
+          transactionHashes: receipt.transactionHashes.map((item) => item.hash),
+          completedAt: receipt.completed ? new Date() : null,
+          updatedAt: new Date(),
+        })
+        .where(eq(keeperhubExecutions.id, execution.id));
+    } catch {
+      await db
+        .update(keeperhubExecutions)
+        .set({ status: "uncertain", updatedAt: new Date() })
+        .where(eq(keeperhubExecutions.id, execution.id));
+    }
+  }
+
+  const refreshed = await db
+    .select()
+    .from(keeperhubExecutions)
+    .where(eq(keeperhubExecutions.jobId, jobId));
+  const approval = refreshed.find((item) => item.stage === "approval");
+  const request = refreshed.find((item) => item.stage === "request");
+  const claim = refreshed.find((item) => item.stage === "claim");
+  const nextStatus = recoveredJobStatus({
+    approval: approval?.status,
+    request: request?.status,
+    claim: claim?.status,
+  });
+
+  await db.transaction(async (tx) => {
+    await tx
+      .update(withdrawalJobs)
+      .set({ status: nextStatus, updatedAt: new Date() })
+      .where(eq(withdrawalJobs.id, jobId));
+    await tx.insert(lifecycleEvents).values({
+      jobId,
+      fromStatus: "attention-required",
+      toStatus: nextStatus,
+      source: "keeperhub",
+      summary:
+        nextStatus === "attention-required"
+          ? "KeeperHub recovery checked the accepted execution; its outcome remains unresolved."
+          : `KeeperHub recovery verified execution state and restored the job to ${nextStatus.replaceAll("-", " ")}.`,
+      evidence: {
+        executions: refreshed.map((execution) => ({
+          stage: execution.stage,
+          executionId: execution.keeperhubExecutionId,
+          status: execution.status,
+          transactionHashes: execution.transactionHashes,
+        })),
+      },
+    });
+  });
+
+  return {
+    status: nextStatus,
+    executions: refreshed.map((execution) => ({
+      stage: execution.stage,
+      status: execution.status,
+      transactionHashes: execution.transactionHashes,
+    })),
+  };
 }

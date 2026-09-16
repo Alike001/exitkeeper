@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { ClaimControls } from "@/components/claim-controls";
 import { ObserveWithdrawalButton } from "@/components/observe-withdrawal-button";
+import { RecoverExecutionButton } from "@/components/recover-execution-button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getWithdrawalJobEvidence } from "@/lib/server/withdrawal-jobs";
@@ -67,6 +68,11 @@ export default async function WithdrawalEvidencePage({
             {evidence.job.status === "claimable" ? (
               <ClaimControls jobId={evidence.job.id} reviewed={claimReviewed} />
             ) : null}
+          </div>
+        ) : null}
+        {evidence.job.status === "attention-required" ? (
+          <div className="mt-6">
+            <RecoverExecutionButton jobId={evidence.job.id} />
           </div>
         ) : null}
 
