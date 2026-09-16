@@ -22,9 +22,10 @@ export function WithdrawalForm() {
   const [asset, setAsset] = useState<"stETH" | "wstETH">("stETH");
   const [amount, setAmount] = useState("");
   const [job, setJob] = useState<PreparedJob | null>(null);
-  const [status, setStatus] = useState<"idle" | "preparing" | "reviewing">(
-    "idle",
-  );
+  const [status, setStatus] = useState<
+    "idle" | "preparing" | "reviewing" | "executing"
+  >("idle");
+  const [reviewed, setReviewed] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   async function prepare(event: React.FormEvent<HTMLFormElement>) {
@@ -68,9 +69,34 @@ export function WithdrawalForm() {
       setMessage(
         "KeeperHub created and dry-ran both exact workflows. Their audit records are now attached to this job.",
       );
+      setReviewed(true);
     } catch (error) {
       setMessage(
         error instanceof Error ? error.message : "Unable to run review",
+      );
+    } finally {
+      setStatus("idle");
+    }
+  }
+
+  async function execute() {
+    if (!(job && reviewed)) return;
+    setStatus("executing");
+    setMessage(null);
+    try {
+      const response = await fetch(`/api/withdrawals/${job.job.id}/execute`, {
+        method: "POST",
+      });
+      const body = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(
+          body.error ?? "KeeperHub could not execute the workflows",
+        );
+      }
+      window.location.assign(`/withdrawals/${job.job.id}`);
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "Unable to execute withdrawal",
       );
     } finally {
       setStatus("idle");
@@ -189,6 +215,22 @@ export function WithdrawalForm() {
               )}
               Create and dry-run in KeeperHub
             </Button>
+            {reviewed ? (
+              <Button
+                disabled={status !== "idle"}
+                onClick={execute}
+                size="lg"
+                type="button"
+                variant="destructive"
+              >
+                {status === "executing" ? (
+                  <LoaderCircle className="animate-spin" />
+                ) : (
+                  <PlayCircle />
+                )}
+                Execute approval, then withdrawal
+              </Button>
+            ) : null}
           </CardContent>
         </Card>
       ) : null}

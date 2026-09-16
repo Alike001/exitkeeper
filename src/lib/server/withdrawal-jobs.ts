@@ -258,3 +258,98 @@ export async function reviewWithdrawalJob(jobId: string) {
 
   return { approval, request, approvalSimulation, requestSimulation };
 }
+
+export async function executeReviewedWithdrawalJob(jobId: string) {
+  const [job] = await db
+    .select()
+    .from(withdrawalJobs)
+    .where(eq(withdrawalJobs.id, jobId));
+  if (!job || job.status !== "request-submitted") {
+    throw new Error("Only a reviewed withdrawal can be executed");
+  }
+
+  const executions = await db
+    .select()
+    .from(keeperhubExecutions)
+    .where(eq(keeperhubExecutions.jobId, jobId));
+  const approval = executions.find((item) => item.stage === "approval");
+  const request = executions.find((item) => item.stage === "request");
+  if (!(approval && request)) {
+    throw new Error("Reviewed KeeperHub workflows are incomplete");
+  }
+
+  const keeperHub = keeperHubClientFromEnvironment();
+  async function executeStage(execution: NonNullable<typeof approval>) {
+    if (execution.status !== "prepared") {
+      throw new Error(`${execution.stage} workflow was already submitted`);
+    }
+    const accepted = await keeperHub.executeWorkflow(
+      execution.workflowId,
+      execution.idempotencyKey,
+    );
+    await db
+      .update(keeperhubExecutions)
+      .set({
+        keeperhubExecutionId: accepted.executionId,
+        status: "accepted",
+        acceptedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(keeperhubExecutions.id, execution.id));
+
+    const receipt = await keeperHub.waitForExecution(accepted.executionId);
+    const hashes = receipt.transactionHashes.map(
+      (transaction) => transaction.hash,
+    );
+    const succeeded = receipt.completed && receipt.error == null;
+    await db
+      .update(keeperhubExecutions)
+      .set({
+        status: succeeded ? "succeeded" : "failed",
+        responseSnapshot: { accepted, receipt },
+        transactionHashes: hashes,
+        completedAt: receipt.completed ? new Date() : null,
+        updatedAt: new Date(),
+      })
+      .where(eq(keeperhubExecutions.id, execution.id));
+    if (!succeeded) {
+      throw new Error(
+        `${execution.stage} workflow did not complete successfully`,
+      );
+    }
+    return receipt;
+  }
+
+  try {
+    const approvalReceipt = await executeStage(approval);
+    const requestReceipt = await executeStage(request);
+    await db.transaction(async (tx) => {
+      await tx
+        .update(withdrawalJobs)
+        .set({ status: "request-confirmed", updatedAt: new Date() })
+        .where(eq(withdrawalJobs.id, jobId));
+      await tx.insert(lifecycleEvents).values({
+        jobId,
+        fromStatus: "request-submitted",
+        toStatus: "request-confirmed",
+        source: "keeperhub",
+        summary: "KeeperHub executed approval and Lido withdrawal in order.",
+        evidence: {
+          approvalExecutionId: approvalReceipt.executionId,
+          requestExecutionId: requestReceipt.executionId,
+          transactionHashes: [
+            ...approvalReceipt.transactionHashes.map((item) => item.hash),
+            ...requestReceipt.transactionHashes.map((item) => item.hash),
+          ],
+        },
+      });
+    });
+    return { approvalReceipt, requestReceipt };
+  } catch (error) {
+    await db
+      .update(withdrawalJobs)
+      .set({ status: "attention-required", updatedAt: new Date() })
+      .where(eq(withdrawalJobs.id, jobId));
+    throw error;
+  }
+}
