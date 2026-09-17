@@ -91,7 +91,11 @@ async def account_state(payload: dict[str, Any]) -> dict[str, Any]:
         include_usd=False,
     )
     if not ok or not isinstance(result, dict):
-        raise RuntimeError("Wayfinder could not read the Lido account state")
+        cause = result.get("error") if isinstance(result, dict) else result
+        raise RuntimeError(
+            "Wayfinder could not read the Lido account state "
+            f"({type(cause).__name__})"
+        )
 
     steth = result.get("steth")
     if isinstance(steth, dict):

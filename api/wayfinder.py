@@ -77,5 +77,9 @@ class handler(BaseHTTPRequestHandler):
                 HTTPStatus.BAD_REQUEST,
                 {"error": "invalid_request", "message": str(error)},
             )
-        except Exception:
-            send_json(self, HTTPStatus.BAD_GATEWAY, {"error": "wayfinder_read_failed"})
+        except Exception as error:
+            send_json(
+                self,
+                HTTPStatus.BAD_GATEWAY,
+                {"error": "wayfinder_read_failed", "message": str(error)},
+            )
