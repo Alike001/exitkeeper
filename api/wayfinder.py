@@ -46,10 +46,6 @@ class handler(BaseHTTPRequestHandler):
         token = os.environ.get("WAYFINDER_SERVICE_TOKEN", "")
         authorization = self.headers.get("Authorization", "")
         if not token or authorization != f"Bearer {token}":
-            print(
-                "wayfinder_unauthorized "
-                f"configured_length={len(token)} received_length={len(authorization)}"
-            )
             send_json(self, HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
             return
 
@@ -81,6 +77,5 @@ class handler(BaseHTTPRequestHandler):
                 HTTPStatus.BAD_REQUEST,
                 {"error": "invalid_request", "message": str(error)},
             )
-        except Exception as error:
-            print(f"wayfinder_read_failed: {type(error).__name__}")
+        except Exception:
             send_json(self, HTTPStatus.BAD_GATEWAY, {"error": "wayfinder_read_failed"})

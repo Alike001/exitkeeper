@@ -10,15 +10,22 @@ from typing import Any
 
 from wayfinder_paths.adapters.lido_adapter.adapter import LidoAdapter
 from wayfinder_paths.core.config import set_rpc_urls
+from wayfinder_paths.core.constants.lido_contracts import LIDO_BY_CHAIN
 
 HOST = "0.0.0.0"
 PORT = 8090
 MAX_REQUEST_BYTES = 32_768
 WAYFINDER_VERSION = "0.11.1"
 HOODI_CHAIN_ID = 560048
+HOODI_LIDO_CONTRACTS = {
+    "steth": "0x3508A952176b3c15387C97BE809eaffB1982176a",
+    "wsteth": "0x7E99eE3C66636DE415D2d7C880938F2f40f94De4",
+    "withdrawal_queue": "0xfe56573178f1bcdf53F01A6E9977670dcBBD9186",
+}
 
 
 def configure_wayfinder() -> None:
+    LIDO_BY_CHAIN.setdefault(HOODI_CHAIN_ID, HOODI_LIDO_CONTRACTS)
     rpc_url = os.environ.get("ETHEREUM_RPC_URL", "").strip()
     if rpc_url:
         set_rpc_urls({str(HOODI_CHAIN_ID): [rpc_url]})
