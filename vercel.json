@@ -1,5 +1,19 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "pnpm db:migrate && pnpm build",
-  "regions": ["iad1"]
+  "regions": ["iad1"],
+  "rewrites": [
+    {
+      "source": "/wayfinder/health",
+      "destination": "/api/wayfinder"
+    },
+    {
+      "source": "/wayfinder/v1/lido/account-state",
+      "destination": "/api/wayfinder?operation=account-state"
+    },
+    {
+      "source": "/wayfinder/v1/lido/request-status",
+      "destination": "/api/wayfinder?operation=request-status"
+    }
+  ]
 }
