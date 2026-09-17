@@ -115,6 +115,10 @@ function normalizedKeeperHubHealthUrl(baseUrl: string): string {
   return url.toString();
 }
 
+function wayfinderHealthUrl(baseUrl: string): string {
+  return new URL("health", `${baseUrl.replace(/\/$/, "")}/`).toString();
+}
+
 export async function getConnectionHealth(
   overrides: Partial<HealthDependencies> = {},
 ): Promise<HealthReport> {
@@ -135,7 +139,7 @@ export async function getConnectionHealth(
       ? timedCheck("wayfinder", "Wayfinder health check failed", async () => {
           await fetchJson(
             dependencies.fetch,
-            new URL("/health", process.env.WAYFINDER_SERVICE_URL).toString(),
+            wayfinderHealthUrl(process.env.WAYFINDER_SERVICE_URL ?? ""),
           );
           return "Wayfinder service is reachable";
         })

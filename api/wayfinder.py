@@ -28,7 +28,8 @@ class handler(BaseHTTPRequestHandler):
         print(f"wayfinder-function {self.address_string()} {format % args}")
 
     def do_GET(self) -> None:
-        if urlparse(self.path).path != "/api/wayfinder":
+        path = urlparse(self.path).path
+        if path not in {"/api/wayfinder", "/wayfinder/health"}:
             send_json(self, HTTPStatus.NOT_FOUND, {"error": "not_found"})
             return
         send_json(
@@ -54,7 +55,12 @@ class handler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length))
             if not isinstance(payload, dict):
                 raise ValueError("request body must be an object")
-            operation = parse_qs(urlparse(self.path).query).get("operation", [""])[0]
+            parsed = urlparse(self.path)
+            operation = parse_qs(parsed.query).get("operation", [""])[0]
+            if not operation and parsed.path.endswith("/v1/lido/account-state"):
+                operation = "account-state"
+            if not operation and parsed.path.endswith("/v1/lido/request-status"):
+                operation = "request-status"
             if operation == "account-state":
                 result = asyncio.run(account_state(payload))
             elif operation == "request-status":
