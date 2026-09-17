@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import urllib.request
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -11,6 +10,7 @@ from typing import Any
 from wayfinder_paths.adapters.lido_adapter.adapter import LidoAdapter
 from wayfinder_paths.core.config import set_rpc_urls
 from wayfinder_paths.core.constants.lido_contracts import LIDO_BY_CHAIN
+from wayfinder_paths.core.utils.web3 import web3_from_chain_id
 
 HOST = "0.0.0.0"
 PORT = 8090
@@ -64,20 +64,9 @@ def serialize_status(status: Any) -> dict[str, Any]:
     }
 
 
-def current_block_number() -> str:
-    rpc_url = require_string(os.environ.get("ETHEREUM_RPC_URL"), "ETHEREUM_RPC_URL")
-    body = json.dumps(
-        {"jsonrpc": "2.0", "id": 1, "method": "eth_blockNumber", "params": []}
-    ).encode()
-    request = urllib.request.Request(
-        rpc_url, data=body, headers={"Content-Type": "application/json"}
-    )
-    with urllib.request.urlopen(request, timeout=10) as response:
-        payload = json.loads(response.read())
-    result = payload.get("result") if isinstance(payload, dict) else None
-    if not isinstance(result, str):
-        raise RuntimeError("Ethereum RPC returned an invalid block number")
-    return str(int(result, 16))
+async def current_block_number() -> str:
+    async with web3_from_chain_id(HOODI_CHAIN_ID) as web3:
+        return str(await web3.eth.block_number)
 
 
 async def account_state(payload: dict[str, Any]) -> dict[str, Any]:
@@ -122,7 +111,7 @@ async def account_state(payload: dict[str, Any]) -> dict[str, Any]:
                 withdrawals["claimable_ether_by_id"] = {
                     str(key): serialize_uint(value) for key, value in claimable.items()
                 }
-    return {**result, "observed_block": current_block_number()}
+    return {**result, "observed_block": await current_block_number()}
 
 
 async def request_status(payload: dict[str, Any]) -> dict[str, Any]:
@@ -141,7 +130,7 @@ async def request_status(payload: dict[str, Any]) -> dict[str, Any]:
             request_ids=request_ids,
         )
     return {
-        "observed_block": current_block_number(),
+        "observed_block": await current_block_number(),
         "request_ids": [serialize_uint(item) for item in request_ids],
         "statuses": [serialize_status(item) for item in statuses],
         "checkpoint_hints": [serialize_uint(item) for item in hints],
