@@ -8,7 +8,7 @@ from http.server import BaseHTTPRequestHandler
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from services.wayfinder.worker import account_state, request_status
+from services.wayfinder.worker import account_state, configure_wayfinder, request_status
 
 MAX_REQUEST_BYTES = 32_768
 
@@ -49,6 +49,7 @@ class handler(BaseHTTPRequestHandler):
             return
 
         try:
+            configure_wayfinder()
             length = int(self.headers.get("Content-Length", "0"))
             if length <= 0 or length > MAX_REQUEST_BYTES:
                 raise ValueError("request body size is invalid")
