@@ -44,7 +44,12 @@ class handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         token = os.environ.get("WAYFINDER_SERVICE_TOKEN", "")
-        if not token or self.headers.get("Authorization") != f"Bearer {token}":
+        authorization = self.headers.get("Authorization", "")
+        if not token or authorization != f"Bearer {token}":
+            print(
+                "wayfinder_unauthorized "
+                f"configured_length={len(token)} received_length={len(authorization)}"
+            )
             send_json(self, HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
             return
 
