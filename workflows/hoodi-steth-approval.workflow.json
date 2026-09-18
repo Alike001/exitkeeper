@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "exportedAt": "2026-09-18T04:50:00.000Z",
+  "workflow": {
+    "name": "ExitKeeper Hoodi stETH approval",
+    "description": "Approve exactly 0.0089 stETH for the Lido Hoodi withdrawal queue from the reviewed KeeperHub wallet."
+  },
+  "nodes": [
+    {
+      "id": "trigger",
+      "type": "trigger",
+      "position": { "x": 100, "y": 200 },
+      "data": {
+        "label": "Manual Trigger",
+        "type": "trigger",
+        "config": { "triggerType": "Manual" },
+        "status": "idle"
+      }
+    },
+    {
+      "id": "approve-token",
+      "type": "action",
+      "position": { "x": 450, "y": 200 },
+      "data": {
+        "label": "Approve exact stETH amount",
+        "description": "Approve only 0.0089 stETH for Lido's Hoodi withdrawal queue.",
+        "type": "action",
+        "config": {
+          "actionType": "web3/write-contract",
+          "network": "560048",
+          "contractAddress": "0x3508A952176b3c15387C97BE809eaffB1982176a",
+          "abi": "[{\"type\":\"function\",\"name\":\"approve\",\"stateMutability\":\"nonpayable\",\"inputs\":[{\"name\":\"spender\",\"type\":\"address\"},{\"name\":\"amount\",\"type\":\"uint256\"}],\"outputs\":[{\"name\":\"approved\",\"type\":\"bool\"}]}]",
+          "abiFunction": "approve",
+          "functionArgs": "[\"0xfe56573178f1bcdf53F01A6E9977670dcBBD9186\",\"8900000000000000\"]",
+          "failOnError": "true"
+        },
+        "status": "idle"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "trigger-to-approve",
+      "source": "trigger",
+      "target": "approve-token"
+    }
+  ],
+  "integrationBindings": []
+}

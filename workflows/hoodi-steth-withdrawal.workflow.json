@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "exportedAt": "2026-09-18T04:50:00.000Z",
+  "workflow": {
+    "name": "ExitKeeper Hoodi stETH withdrawal",
+    "description": "Request exactly 0.0089 stETH from Lido's Hoodi withdrawal queue for the fixed KeeperHub wallet owner."
+  },
+  "nodes": [
+    {
+      "id": "trigger",
+      "type": "trigger",
+      "position": { "x": 100, "y": 200 },
+      "data": {
+        "label": "Manual Trigger",
+        "type": "trigger",
+        "config": { "triggerType": "Manual" },
+        "status": "idle"
+      }
+    },
+    {
+      "id": "request-withdrawal",
+      "type": "action",
+      "position": { "x": 450, "y": 200 },
+      "data": {
+        "label": "Request exact stETH withdrawal",
+        "description": "Submit the reviewed 0.0089 stETH request to Lido's Hoodi withdrawal queue.",
+        "type": "action",
+        "config": {
+          "actionType": "web3/write-contract",
+          "network": "560048",
+          "contractAddress": "0xfe56573178f1bcdf53F01A6E9977670dcBBD9186",
+          "abi": "[{\"type\":\"function\",\"name\":\"requestWithdrawals\",\"stateMutability\":\"nonpayable\",\"inputs\":[{\"name\":\"_amounts\",\"type\":\"uint256[]\"},{\"name\":\"_owner\",\"type\":\"address\"}],\"outputs\":[{\"name\":\"requestIds\",\"type\":\"uint256[]\"}]}]",
+          "abiFunction": "requestWithdrawals",
+          "functionArgs": "[[\"8900000000000000\"],\"0x3d1917F7Af9F432f63e7feAaFeD065D5a5264725\"]",
+          "failOnError": "true"
+        },
+        "status": "idle"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "trigger-to-request",
+      "source": "trigger",
+      "target": "request-withdrawal"
+    }
+  ],
+  "integrationBindings": []
+}
