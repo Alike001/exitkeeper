@@ -52,12 +52,17 @@ assets needed to execute the end-to-end Lido withdrawal:
 
 - [0.05 Hoodi ETH gas funding](https://hoodi.etherscan.io/tx/0x3a48067011a1e1bbcf7a50b171d6eb35b52de01f4a5fb2685ec4c6c323b88c5e)
 - [0.009 Hoodi stETH funding](https://hoodi.etherscan.io/tx/0x1d416828d8f905c9fbf17c3a7bdda355e452be9c46ecce6b640192a4950a617c)
+- [KeeperHub approval of exactly 0.0089 stETH](https://hoodi.etherscan.io/tx/0x994edf2b79d232f77b5724c2043cdda7888e4a43d16a995b987a827b1b0156e4)
+- [KeeperHub Lido withdrawal request for exactly 0.0089 stETH](https://hoodi.etherscan.io/tx/0x94ebeb7e7c3bf51ed9a76be2eed219bb795f9049803c0b33c8412bab777b321d)
 
-These are funding transactions, not a claim that KeeperHub has already
-executed the withdrawal. Hosted KeeperHub does not currently simulate Hoodi
-nodes, so ExitKeeper correctly blocked the hosted execution attempt. The final
-approval and withdrawal request are therefore being run through the
-self-hosted Hoodi environment, where the chain and RPC are explicitly seeded.
+Hosted KeeperHub does not currently simulate Hoodi nodes, so ExitKeeper
+correctly blocked the hosted execution attempt. The final approval and
+withdrawal request were executed through the self-hosted Hoodi environment,
+where the chain and RPC were explicitly seeded. Both KeeperHub execution audit
+records report success, and both transaction receipts were independently
+verified on Hoodi. The withdrawal left `0.0001 stETH` in the wallet, confirming
+that the workflow used the reviewed `0.0089 stETH` amount rather than granting
+or withdrawing the full balance.
 
 ## Demo flow
 
